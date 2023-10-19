@@ -1,4 +1,7 @@
 #define SOKOL_IMPL
+#include "error.h"
+#define SOKOL_ASSERT(c) ASSERT(c)
+#define SOKOL_UNREACHABLE UNREACHABLE()
 #define SOKOL_GLCORE33
 #include <sokol_app.h>
 #include <sokol_gfx.h>

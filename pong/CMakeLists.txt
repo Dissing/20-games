@@ -13,6 +13,7 @@ set(WARNING_COMPILER_OPTIONS -Wall -Wextra -Wno-unused-parameter -Wno-missing-fi
 include(sokol)
 
 set(SRCS
+    src/error.c
     src/main.c
 )
 

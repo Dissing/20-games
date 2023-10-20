@@ -1,3 +1,5 @@
+#include <HandmadeMath.h>
+
 #define SOKOL_IMPL
 #include "error.h"
 #define SOKOL_ASSERT(c) ASSERT(c)

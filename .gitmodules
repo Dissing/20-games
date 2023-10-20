@@ -1,3 +1,6 @@
 [submodule "depends/sokol"]
 	path = depends/sokol
 	url = git@github.com:floooh/sokol.git
+[submodule "depends/HandmadeMath"]
+	path = depends/HandmadeMath
+	url = git@github.com:HandmadeMath/HandmadeMath.git

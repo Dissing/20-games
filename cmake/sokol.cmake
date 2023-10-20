@@ -1,2 +1,0 @@
-set(SOKOL_INCLUDE_DIR ${DEPENDS_DIR}/sokol/)
-

@@ -10,7 +10,8 @@ set(DEPENDS_DIR ${CMAKE_SOURCE_DIR}/../depends)
 
 set(WARNING_COMPILER_OPTIONS -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 
-include(sokol)
+set(HANDMADE_INCLUDE_DIR ${DEPENDS_DIR}/HandmadeMath/)
+set(SOKOL_INCLUDE_DIR ${DEPENDS_DIR}/sokol/)
 
 set(SRCS
     src/error.c
@@ -18,5 +19,5 @@ set(SRCS
 )
 
 add_executable(pong ${SRCS})
-target_include_directories(pong SYSTEM PRIVATE ${SOKOL_INCLUDE_DIR})
+target_include_directories(pong SYSTEM PRIVATE ${SOKOL_INCLUDE_DIR} ${HANDMADE_INCLUDE_DIR})
 target_link_libraries(pong X11 Xcursor Xi GL dl pthread m)

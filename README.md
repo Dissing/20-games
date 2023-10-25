@@ -9,7 +9,7 @@ In brief, the goal is master the fundamentals of gamedev by developing 20 small 
 ## Rules
 
 - Each game should take no more than 20-30 hours to develop.
-- The tech stack must be C with OpenGL running on both desktop and wasm.
+- The tech stack must be C running on both desktop and wasm.
 - Dependencies can be used for complex subsystems, e.g. physics and asset loading, but no game engine nor framework should be used.
 
 ## Roadmap

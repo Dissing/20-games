@@ -18,14 +18,12 @@ typedef struct {
 } Vertex;
 
 typedef struct {
-    HMM_Vec2 min;
-    HMM_Vec2 max;
+    HMM_Vec2 center;
+    HMM_Vec2 extent;
 } AABB;
 
 #define NUM_WALLS 2
 #define NUM_PLAYERS 2
-
-const HMM_Vec2 paddle_extent = { 0.02, 0.15 };
 
 static struct {
     sg_pass_action pass_action;
@@ -39,7 +37,7 @@ static struct {
     // World
     AABB walls[NUM_WALLS];
 
-    HMM_Vec2 paddle_pos[NUM_PLAYERS];
+    AABB paddles[NUM_PLAYERS];
 
 } self;
 
@@ -53,13 +51,14 @@ Vertex* allocate_vertices(uint num) {
 
 static void game_init(void) {
     const float WALL_THICKNESS = 0.1;
-    self.walls[0] = (AABB) { { -1, -1 }, { 1, -1 + WALL_THICKNESS } };
-    self.walls[1] = (AABB) { { -1, 1 - WALL_THICKNESS }, { 1, 1 } };
+    self.walls[0] = (AABB) { { 0, -1 }, { 2, WALL_THICKNESS } };
+    self.walls[1] = (AABB) { { 0, 1 }, { 2, WALL_THICKNESS } };
 
     const float PADDLE_X_OFFSET = 0.05;
+    const HMM_Vec2 PADDLE_EXTENT = { 0.02, 0.15 };
 
-    self.paddle_pos[0] = (HMM_Vec2) { -1 + PADDLE_X_OFFSET, 0 };
-    self.paddle_pos[1] = (HMM_Vec2) { 1 - PADDLE_X_OFFSET, 0 };
+    self.paddles[0] = (AABB) { { -1 + PADDLE_X_OFFSET, 0 }, PADDLE_EXTENT };
+    self.paddles[1] = (AABB) { { 1 - PADDLE_X_OFFSET, 0 }, PADDLE_EXTENT };
 }
 
 static void render_init(void) {
@@ -91,7 +90,7 @@ static void render_init(void) {
     });
 }
 
-static void draw_quad_vertices(HMM_Vec2 ps[4]) {
+static void draw_quad(HMM_Vec2 ps[4]) {
     Vertex* v = allocate_vertices(6);
     v[0].position = ps[0];
     v[1].position = ps[1];
@@ -101,12 +100,12 @@ static void draw_quad_vertices(HMM_Vec2 ps[4]) {
     v[5].position = ps[3];
 }
 
-static void draw_quad(HMM_Vec2 center, HMM_Vec2 extent) {
+static void draw_aabb(AABB aabb) {
     HMM_Vec2 ps[4] = {
-        HMM_SubV2(center, extent),
-        HMM_AddV2(center, (HMM_Vec2) { -extent.X, extent.Y }),
-        HMM_AddV2(center, extent),
-        HMM_AddV2(center, (HMM_Vec2) { extent.X, -extent.Y }),
+        HMM_SubV2(aabb.center, aabb.extent),
+        HMM_AddV2(aabb.center, (HMM_Vec2) { -aabb.extent.X, aabb.extent.Y }),
+        HMM_AddV2(aabb.center, aabb.extent),
+        HMM_AddV2(aabb.center, (HMM_Vec2) { aabb.extent.X, -aabb.extent.Y }),
     };
     Vertex* v = allocate_vertices(6);
     v[0].position = ps[0];
@@ -133,14 +132,8 @@ static void draw_dashed_line(HMM_Vec2 start, HMM_Vec2 end, uint num_segments, f3
             HMM_AddV2(segment_end, wd),
             HMM_SubV2(segment_end, wd),
         };
-        draw_quad_vertices(ps);
+        draw_quad(ps);
     }
-}
-
-static void draw_aabb(AABB aabb) {
-    HMM_Vec2 center = HMM_DivV2F(HMM_AddV2(aabb.min, aabb.max), 2);
-    HMM_Vec2 extent = HMM_SubV2(aabb.max, center);
-    draw_quad(center, extent);
 }
 
 static void extract(void) {
@@ -150,7 +143,7 @@ static void extract(void) {
 
     draw_dashed_line((HMM_Vec2) { 0.0, 0.88 }, (HMM_Vec2) { 0.0, -0.88 }, 32, 0.01);
 
-    for (uint i = 0; i < NUM_PLAYERS; ++i) draw_quad(self.paddle_pos[i], paddle_extent);
+    for (uint i = 0; i < NUM_PLAYERS; ++i) draw_aabb(self.paddles[i]);
 }
 
 static void submit(void) {

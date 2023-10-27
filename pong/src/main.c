@@ -38,6 +38,7 @@ static struct {
     AABB walls[NUM_WALLS];
 
     AABB paddles[NUM_PLAYERS];
+    AABB ball;
 
 } self;
 
@@ -59,6 +60,9 @@ static void game_init(void) {
 
     self.paddles[0] = (AABB) { { -1 + PADDLE_X_OFFSET, 0 }, PADDLE_EXTENT };
     self.paddles[1] = (AABB) { { 1 - PADDLE_X_OFFSET, 0 }, PADDLE_EXTENT };
+
+    const HMM_Vec2 BALL_EXTENT = { 0.02, 0.02 };
+    self.ball = (AABB) { { 0.5, 0 }, BALL_EXTENT };
 }
 
 static void render_init(void) {
@@ -144,6 +148,8 @@ static void extract(void) {
     draw_dashed_line((HMM_Vec2) { 0.0, 0.88 }, (HMM_Vec2) { 0.0, -0.88 }, 32, 0.01);
 
     for (uint i = 0; i < NUM_PLAYERS; ++i) draw_aabb(self.paddles[i]);
+
+    draw_aabb(self.ball);
 }
 
 static void submit(void) {

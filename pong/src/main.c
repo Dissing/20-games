@@ -23,6 +23,9 @@ typedef struct {
 } AABB;
 
 #define NUM_WALLS 2
+#define NUM_PLAYERS 2
+
+const HMM_Vec2 paddle_extent = { 0.02, 0.15 };
 
 static struct {
     sg_pass_action pass_action;
@@ -35,6 +38,8 @@ static struct {
 
     // World
     AABB walls[NUM_WALLS];
+
+    HMM_Vec2 paddle_pos[NUM_PLAYERS];
 
 } self;
 
@@ -50,6 +55,11 @@ static void game_init(void) {
     const float WALL_THICKNESS = 0.1;
     self.walls[0] = (AABB) { { -1, -1 }, { 1, -1 + WALL_THICKNESS } };
     self.walls[1] = (AABB) { { -1, 1 - WALL_THICKNESS }, { 1, 1 } };
+
+    const float PADDLE_X_OFFSET = 0.05;
+
+    self.paddle_pos[0] = (HMM_Vec2) { -1 + PADDLE_X_OFFSET, 0 };
+    self.paddle_pos[1] = (HMM_Vec2) { 1 - PADDLE_X_OFFSET, 0 };
 }
 
 static void render_init(void) {
@@ -139,6 +149,8 @@ static void extract(void) {
     for (uint i = 0; i < NUM_WALLS; ++i) draw_aabb(self.walls[i]);
 
     draw_dashed_line((HMM_Vec2) { 0.0, 0.88 }, (HMM_Vec2) { 0.0, -0.88 }, 32, 0.01);
+
+    for (uint i = 0; i < NUM_PLAYERS; ++i) draw_quad(self.paddle_pos[i], paddle_extent);
 }
 
 static void submit(void) {

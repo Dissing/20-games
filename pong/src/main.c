@@ -25,6 +25,14 @@ typedef struct {
 #define NUM_WALLS 2
 #define NUM_PLAYERS 2
 
+typedef enum {
+    INPUT_LEFT_PADDLE_UP,
+    INPUT_LEFT_PADDLE_DOWN,
+    INPUT_RIGHT_PADDLE_UP,
+    INPUT_RIGHT_PADDLE_DOWN,
+    INPUT_MAX,
+} InputEvent;
+
 static struct {
     sg_pass_action pass_action;
 
@@ -40,6 +48,8 @@ static struct {
     AABB paddles[NUM_PLAYERS];
     AABB ball;
 
+    // Input
+    InputEvent events[INPUT_MAX];
 } self;
 
 Vertex* allocate_vertices(uint num) {
@@ -50,12 +60,13 @@ Vertex* allocate_vertices(uint num) {
     return (Vertex*) p;
 }
 
+const f32 WALL_THICKNESS = 0.1;
+
 static void game_init(void) {
-    const float WALL_THICKNESS = 0.1;
     self.walls[0] = (AABB) { { 0, -1 }, { 2, WALL_THICKNESS } };
     self.walls[1] = (AABB) { { 0, 1 }, { 2, WALL_THICKNESS } };
 
-    const float PADDLE_X_OFFSET = 0.05;
+    const f32 PADDLE_X_OFFSET = 0.05;
     const HMM_Vec2 PADDLE_EXTENT = { 0.02, 0.15 };
 
     self.paddles[0] = (AABB) { { -1 + PADDLE_X_OFFSET, 0 }, PADDLE_EXTENT };
@@ -63,6 +74,29 @@ static void game_init(void) {
 
     const HMM_Vec2 BALL_EXTENT = { 0.02, 0.02 };
     self.ball = (AABB) { { 0.5, 0 }, BALL_EXTENT };
+}
+
+static f32 clamp(f32 x, f32 lower, f32 upper) {
+    return fmax(fmin(x, upper), lower);
+}
+
+static void tick(void) {
+    const f32 PADDLE_SPEED = 0.02;
+
+    // Handle input event
+    if (self.events[INPUT_LEFT_PADDLE_UP]) { self.paddles[0].center.Y += PADDLE_SPEED; }
+    if (self.events[INPUT_LEFT_PADDLE_DOWN]) { self.paddles[0].center.Y -= PADDLE_SPEED; }
+
+    if (self.events[INPUT_RIGHT_PADDLE_UP]) { self.paddles[1].center.Y += PADDLE_SPEED; }
+    if (self.events[INPUT_RIGHT_PADDLE_DOWN]) { self.paddles[1].center.Y -= PADDLE_SPEED; }
+
+    // Collision handling
+
+    for (uint i = 0; i < NUM_PLAYERS; ++i) {
+        f32 min_y = -1 + self.paddles[i].extent.Y + WALL_THICKNESS;
+        f32 max_y = 1 - self.paddles[i].extent.Y - WALL_THICKNESS;
+        self.paddles[i].center.Y = clamp(self.paddles[i].center.Y, min_y, max_y);
+    }
 }
 
 static void render_init(void) {
@@ -176,12 +210,31 @@ static void init(void) {
 }
 
 static void frame(void) {
+    tick();
     extract();
     submit();
 }
 
 static void cleanup(void) {
     sg_shutdown();
+}
+
+static void handle_key_press(sapp_keycode key_code, bool pressed) {
+    switch (key_code) {
+        case SAPP_KEYCODE_COMMA: self.events[INPUT_LEFT_PADDLE_UP] = pressed; break;
+        case SAPP_KEYCODE_O: self.events[INPUT_LEFT_PADDLE_DOWN] = pressed; break;
+        case SAPP_KEYCODE_UP: self.events[INPUT_RIGHT_PADDLE_UP] = pressed; break;
+        case SAPP_KEYCODE_DOWN: self.events[INPUT_RIGHT_PADDLE_DOWN] = pressed; break;
+        default: break;
+    }
+}
+
+static void event(const sapp_event* ev) {
+    switch (ev->type) {
+        case SAPP_EVENTTYPE_KEY_DOWN: handle_key_press(ev->key_code, true); break;
+        case SAPP_EVENTTYPE_KEY_UP: handle_key_press(ev->key_code, false); break;
+        default: break;
+    }
 }
 
 sapp_desc sokol_main(int argc, char* argv[]) {
@@ -191,6 +244,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         .init_cb = init,
         .frame_cb = frame,
         .cleanup_cb = cleanup,
+        .event_cb = event,
         .logger.func = slog_func,
     };
 }

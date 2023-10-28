@@ -47,6 +47,7 @@ static struct {
 
     AABB paddles[NUM_PLAYERS];
     AABB ball;
+    HMM_Vec2 ball_velocity;
 
     // Input
     InputEvent events[INPUT_MAX];
@@ -62,6 +63,14 @@ Vertex* allocate_vertices(uint num) {
 
 const f32 WALL_THICKNESS = 0.1;
 
+static void spawn_ball(f32 direction) {
+    const HMM_Vec2 BALL_EXTENT = { 0.02, 0.02 };
+    self.ball = (AABB) { { 0, 0 }, BALL_EXTENT };
+
+    const f32 BALL_START_SPEED = 0.01;
+    self.ball_velocity = (HMM_Vec2) { direction * BALL_START_SPEED, 0.00 };
+}
+
 static void game_init(void) {
     self.walls[0] = (AABB) { { 0, -1 }, { 2, WALL_THICKNESS } };
     self.walls[1] = (AABB) { { 0, 1 }, { 2, WALL_THICKNESS } };
@@ -72,12 +81,23 @@ static void game_init(void) {
     self.paddles[0] = (AABB) { { -1 + PADDLE_X_OFFSET, 0 }, PADDLE_EXTENT };
     self.paddles[1] = (AABB) { { 1 - PADDLE_X_OFFSET, 0 }, PADDLE_EXTENT };
 
-    const HMM_Vec2 BALL_EXTENT = { 0.02, 0.02 };
-    self.ball = (AABB) { { 0.5, 0 }, BALL_EXTENT };
+    spawn_ball(1.0);
 }
 
 static f32 clamp(f32 x, f32 lower, f32 upper) {
     return fmax(fmin(x, upper), lower);
+}
+
+static f32 fsign(f32 x) {
+    if (x > 0) return 1.0;
+    if (x < 0) return -1.0;
+    return 0.0;
+}
+
+bool aabb_intersect(AABB x, AABB y) {
+    HMM_Vec2 distance = HMM_SubV2(x.center, y.center);
+    HMM_Vec2 size = HMM_AddV2(x.extent, y.extent);
+    return (size.X > HMM_ABS(distance.X)) && (size.Y > HMM_ABS(distance.Y));
 }
 
 static void tick(void) {
@@ -90,13 +110,38 @@ static void tick(void) {
     if (self.events[INPUT_RIGHT_PADDLE_UP]) { self.paddles[1].center.Y += PADDLE_SPEED; }
     if (self.events[INPUT_RIGHT_PADDLE_DOWN]) { self.paddles[1].center.Y -= PADDLE_SPEED; }
 
-    // Collision handling
-
+    // Update paddles
     for (uint i = 0; i < NUM_PLAYERS; ++i) {
         f32 min_y = -1 + self.paddles[i].extent.Y + WALL_THICKNESS;
         f32 max_y = 1 - self.paddles[i].extent.Y - WALL_THICKNESS;
         self.paddles[i].center.Y = clamp(self.paddles[i].center.Y, min_y, max_y);
     }
+
+    // Update ball
+    self.ball.center = HMM_AddV2(self.ball.center, self.ball_velocity);
+
+    for (uint i = 0; i < NUM_WALLS; ++i)
+        if (aabb_intersect(self.ball, self.walls[i])) self.ball_velocity.Y *= -1;
+
+    const f32 BALL_SPEED = 0.025;
+    const f32 MAX_BOUNCE_ANGLE = 60 * M_PI / 180;
+    for (uint i = 0; i < NUM_PLAYERS; ++i) {
+        if (aabb_intersect(self.ball, self.paddles[i])) {
+            f32 relative_y = self.paddles[i].center.Y - self.ball.center.Y;
+            f32 normalized_y = relative_y / self.paddles[i].extent.Y;
+            f32 bounce_angle = normalized_y * MAX_BOUNCE_ANGLE;
+            f32 bounce_sign = -fsign(self.ball.center.X);
+            HMM_Vec2 direction =
+                (HMM_Vec2) { bounce_sign * cosf(bounce_angle), -sinf(bounce_angle) };
+
+            self.ball_velocity = HMM_MulV2F(direction, BALL_SPEED);
+        }
+    }
+
+    bool left_won = self.ball.center.X > 1.0;
+    bool right_won = self.ball.center.X < -1.0;
+
+    if (left_won || right_won) { spawn_ball(left_won ? 1.0 : -1.0); }
 }
 
 static void render_init(void) {

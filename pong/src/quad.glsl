@@ -1,22 +1,43 @@
 @vs vs
 
-in vec2 position;
-out vec4 color;
+// Per vertex
+in vec2 v_pos;
+in vec2 v_uv;
+
+// Per instance
+
+in vec2 i_pos_offset;
+in vec2 i_pos_scale;
+in vec2 i_uv_offset;
+in vec2 i_uv_scale;
+in vec4 i_color;
+
+out vec2 f_uv;
+out vec4 f_color;
 
 void main() {
-    gl_Position = vec4(position, 0, 1);
-    color = vec4(1.0, 1.0, 1.0, 1.0);
+    vec2 pos = v_pos * i_pos_scale + i_pos_offset;
+    gl_Position = vec4(pos, 0, 1);
+
+    f_uv = v_uv * i_uv_scale + i_uv_offset;
+
+    f_color = i_color;
 }
 
 @end
 
 @fs fs
 
-in vec4 color;
-out vec4 frag_color;
+in vec2 f_uv;
+in vec4 f_color;
+
+out vec4 out_color;
+
+uniform texture2D tex;
+uniform sampler smp;
 
 void main() {
-    frag_color = color;
+    out_color = texture(sampler2D(tex, smp), f_uv) * f_color;
 }
 
 @end

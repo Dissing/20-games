@@ -12,18 +12,35 @@
 
 #include "quad.glsl.h"
 
-#define MAX_NUM_VERTICES 1024 * 6
 typedef struct {
-    HMM_Vec2 position;
-} Vertex;
+    HMM_Vec2 position_offset;
+    HMM_Vec2 position_scale;
+    HMM_Vec2 uv_offset;
+    HMM_Vec2 uv_scale;
+    HMM_Vec4 color;
+} BatchInstance;
+
+typedef struct {
+    uint instance_offset;
+    uint num_instance;
+    sg_image image;
+} SpriteBatch;
+
+typedef struct {
+    sg_image image;
+    uint width, height;
+    uint num_cols, num_rows;
+} SpriteAtlas;
+
+typedef struct {
+    BatchInstance instance;
+    sg_image image;
+} SpriteEntry;
 
 typedef struct {
     HMM_Vec2 center;
     HMM_Vec2 extent;
 } AABB;
-
-#define NUM_WALLS 2
-#define NUM_PLAYERS 2
 
 typedef enum {
     INPUT_LEFT_PADDLE_UP,
@@ -33,14 +50,24 @@ typedef enum {
     INPUT_MAX,
 } InputEvent;
 
+#define MAX_NUM_SPRITES 1024
+#define NUM_WALLS 2
+#define NUM_PLAYERS 2
+
 static struct {
     sg_pass_action pass_action;
 
-    // Quad rendering
-    u8 vertices[MAX_NUM_VERTICES * sizeof(Vertex)];
-    uint num_vertices;
-    sg_buffer vbo;
+    // Sprite rendering
+    u8 instances[MAX_NUM_SPRITES * sizeof(BatchInstance)];
+    sg_buffer vertex_vbo;
+    sg_buffer instance_vbo;
     sg_pipeline pipeline;
+
+    SpriteEntry sprite_entries[MAX_NUM_SPRITES];
+    uint num_sprite_entries;
+
+    sg_image white_image;
+    sg_sampler sampler;
 
     // World
     AABB walls[NUM_WALLS];
@@ -53,14 +80,6 @@ static struct {
     InputEvent events[INPUT_MAX];
 } self;
 
-Vertex* allocate_vertices(uint num) {
-    ASSERT(self.num_vertices + num < MAX_NUM_VERTICES);
-    u8* p = &self.vertices[self.num_vertices * sizeof(Vertex)];
-    self.num_vertices += num;
-
-    return (Vertex*) p;
-}
-
 const f32 WALL_THICKNESS = 0.1;
 
 static void spawn_ball(f32 direction) {
@@ -72,8 +91,8 @@ static void spawn_ball(f32 direction) {
 }
 
 static void game_init(void) {
-    self.walls[0] = (AABB) { { 0, -1 }, { 2, WALL_THICKNESS } };
-    self.walls[1] = (AABB) { { 0, 1 }, { 2, WALL_THICKNESS } };
+    self.walls[0] = (AABB) { { 0, -1 }, { 1, WALL_THICKNESS } };
+    self.walls[1] = (AABB) { { 0, 1 }, { 1, WALL_THICKNESS } };
 
     const f32 PADDLE_X_OFFSET = 0.05;
     const HMM_Vec2 PADDLE_EXTENT = { 0.02, 0.15 };
@@ -154,9 +173,28 @@ static void render_init(void) {
                                               .clear_value = { 0.0, 0.0, 0.0, 1.0 },
                                           } };
 
+    // clang-format off
+    f32 vertex_data[] = {
+        //pos     uv
+        -1.0, -1.0, 0.0, 0.0,
+         1.0, -1.0, 1.0, 0.0,
+        -1.0,  1.0, 0.0, 1.0,
+         1.0, -1.0, 1.0, 0.0,
+         1.0,  1.0, 1.0, 1.0,
+        -1.0,  1.0, 0.0, 1.0,
+    };
+    // clang-format on
+
     // Setup quad renderer
-    self.vbo = sg_make_buffer(&(sg_buffer_desc) {
-        .size = MAX_NUM_VERTICES * sizeof(Vertex),
+    self.vertex_vbo = sg_make_buffer(&(sg_buffer_desc) {
+        .size = sizeof(vertex_data),
+        .type = SG_BUFFERTYPE_VERTEXBUFFER,
+        .usage = SG_USAGE_IMMUTABLE,
+        .data = vertex_data,
+    });
+
+    self.instance_vbo = sg_make_buffer(&(sg_buffer_desc) {
+        .size = sizeof(BatchInstance) * MAX_NUM_SPRITES,
         .type = SG_BUFFERTYPE_VERTEXBUFFER,
         .usage = SG_USAGE_STREAM,
     });
@@ -166,84 +204,202 @@ static void render_init(void) {
     self.pipeline = sg_make_pipeline(&(sg_pipeline_desc) {
         .shader = quad_shader,
         .layout = {
-            .attrs[0] = {
-                .format = SG_VERTEXFORMAT_FLOAT2,
-            }
+            .buffers[1].step_func = SG_VERTEXSTEP_PER_INSTANCE,
+            .buffers[1].stride = sizeof(BatchInstance),
+            .attrs = {
+                [ATTR_vs_v_pos] = {
+                    .format = SG_VERTEXFORMAT_FLOAT2,
+                    .buffer_index = 0
+                },
+                [ATTR_vs_v_uv] = {
+                    .format = SG_VERTEXFORMAT_FLOAT2,
+                    .buffer_index = 0
+                },
+                [ATTR_vs_i_pos_offset] = {
+                    .format = SG_VERTEXFORMAT_FLOAT2,
+                    .buffer_index = 1,
+                    .offset = offsetof(BatchInstance, position_offset),
+                },
+                [ATTR_vs_i_pos_scale] = {
+                    .format = SG_VERTEXFORMAT_FLOAT2,
+                    .buffer_index = 1,
+                    .offset = offsetof(BatchInstance, position_scale),
+                },
+                [ATTR_vs_i_uv_offset] = {
+                    .format = SG_VERTEXFORMAT_FLOAT2,
+                    .buffer_index = 1,
+                    .offset = offsetof(BatchInstance, uv_offset),
+                },
+                [ATTR_vs_i_uv_scale] = {
+                    .format = SG_VERTEXFORMAT_FLOAT2,
+                    .buffer_index = 1,
+                    .offset = offsetof(BatchInstance, uv_scale),
+                },
+                [ATTR_vs_i_color] = {
+                    .format = SG_VERTEXFORMAT_FLOAT4,
+                    .buffer_index = 1,
+                    .offset = offsetof(BatchInstance, color),
+                },
+            },
         },
     });
+
+    u8 white_pixel[] = { 0xFF, 0xFF, 0xFF, 0xFF };
+
+    self.white_image = sg_make_image(&(sg_image_desc) {
+        .width = 1,
+        .height = 1,
+        .data.subimage[0][0] = SG_RANGE(white_pixel),
+    });
+
+    self.sampler = sg_make_sampler(&(sg_sampler_desc) {});
 }
 
-static void draw_quad(HMM_Vec2 ps[4]) {
-    Vertex* v = allocate_vertices(6);
-    v[0].position = ps[0];
-    v[1].position = ps[1];
-    v[2].position = ps[3];
-    v[3].position = ps[1];
-    v[4].position = ps[2];
-    v[5].position = ps[3];
-}
+static void draw_sprite(SpriteAtlas* atlas, uint index, AABB aabb, HMM_Vec4 color) {
+    ASSERT(self.num_sprite_entries < MAX_NUM_SPRITES);
+    uint idx = self.num_sprite_entries++;
 
-static void draw_aabb(AABB aabb) {
-    HMM_Vec2 ps[4] = {
-        HMM_SubV2(aabb.center, aabb.extent),
-        HMM_AddV2(aabb.center, (HMM_Vec2) { -aabb.extent.X, aabb.extent.Y }),
-        HMM_AddV2(aabb.center, aabb.extent),
-        HMM_AddV2(aabb.center, (HMM_Vec2) { aabb.extent.X, -aabb.extent.Y }),
+    uint uv_col = index % atlas->num_cols;
+    uint uv_row = index / atlas->num_cols;
+    ASSERT(uv_row < atlas->num_rows);
+
+    HMM_Vec2 uv_offset = (HMM_Vec2) {
+        uv_col / (f32) atlas->width,
+        uv_row / (f32) atlas->height,
     };
-    Vertex* v = allocate_vertices(6);
-    v[0].position = ps[0];
-    v[1].position = ps[1];
-    v[2].position = ps[3];
-    v[3].position = ps[1];
-    v[4].position = ps[2];
-    v[5].position = ps[3];
+
+    HMM_Vec2 uv_scale = (HMM_Vec2) {
+        atlas->num_cols / (f32) atlas->width,
+        atlas->num_rows / (f32) atlas->height,
+    };
+
+    self.sprite_entries[idx] = (SpriteEntry) {
+        .instance = {
+            .position_offset = aabb.center,
+            .position_scale = aabb.extent,
+            .uv_offset = uv_offset,
+            .uv_scale = uv_scale,
+            .color = color,
+        },
+        .image = atlas->image,
+    };
 }
 
-static void draw_dashed_line(HMM_Vec2 start, HMM_Vec2 end, uint num_segments, f32 width) {
+static void draw_aabb(AABB aabb, HMM_Vec4 color) {
+    ASSERT(self.num_sprite_entries < MAX_NUM_SPRITES);
+    uint idx = self.num_sprite_entries++;
+    self.sprite_entries[idx] = (SpriteEntry) {
+        .instance = {
+            .position_offset = aabb.center,
+            .position_scale = aabb.extent,
+            .uv_offset = {},
+            .uv_scale = {1.0, 1.0},
+            .color = color,
+        },
+        .image = self.white_image,
+    };
+}
+
+int compare_sprite_entries(const void* a, const void* b) {
+    sg_image img_a = ((const SpriteEntry*) a)->image;
+    sg_image img_b = ((const SpriteEntry*) b)->image;
+
+    if (img_a.id < img_b.id) return -1;
+    if (img_a.id > img_b.id) return 1;
+    return 0;
+}
+
+static void draw_sprites() {
+    if (self.num_sprite_entries == 0) return;
+
+    // Sort entries according to texture
+    qsort(self.sprite_entries, self.num_sprite_entries, sizeof(SpriteEntry),
+          compare_sprite_entries);
+
+    // Prepare instance data and build batches
+    const uint MAX_NUM_BATCHES = 32;
+    SpriteBatch batches[MAX_NUM_BATCHES];
+    uint num_batches;
+
+    uint prev_image_id = self.sprite_entries[0].image.id;
+    uint prev_end = 0;
+    uint num_batch_instances = 0;
+
+    for (uint i = 0; i < self.num_sprite_entries; ++i) {
+        num_batch_instances++;
+        uint offset = i * sizeof(BatchInstance);
+
+        SpriteEntry* entry = &self.sprite_entries[i];
+        memcpy(self.instances + offset, &entry->instance, sizeof(BatchInstance));
+
+        if (entry->image.id != prev_image_id || i == self.num_sprite_entries - 1) {
+            ASSERT(num_batches < MAX_NUM_BATCHES);
+            SpriteBatch* batch = &batches[num_batches++];
+            batch->instance_offset = prev_end;
+            batch->num_instance = num_batch_instances;
+            batch->image = entry->image;
+
+            prev_image_id = entry->image.id;
+            prev_end = offset + sizeof(BatchInstance);
+            num_batch_instances = 0;
+        }
+    }
+
+    // Upload instances to GPU
+    sg_update_buffer(self.instance_vbo, &(sg_range) {
+                                            .ptr = self.instances,
+                                            .size = self.num_sprite_entries * sizeof(BatchInstance),
+                                        });
+
+    sg_apply_pipeline(self.pipeline);
+
+    // Draw each batch
+    for (uint i = 0; i < num_batches; ++i) {
+        sg_apply_bindings(&(sg_bindings) {
+            .fs.images = { batches[i].image },
+            .fs.samplers = { self.sampler },
+            .vertex_buffers = { self.vertex_vbo, self.instance_vbo },
+            .vertex_buffer_offsets[1] = batches[i].instance_offset,
+        });
+        sg_draw(0, 6, batches[i].num_instance);
+    }
+
+    // Clear state for next frame
+    self.num_sprite_entries = 0;
+}
+
+const HMM_Vec4 WHITE = (HMM_Vec4) { 1.0, 1.0, 1.0, 1.0 };
+const HMM_Vec4 RED = (HMM_Vec4) { 1.0, 0.0, 0.0, 1.0 };
+
+static void draw_vertical_dashed_line(HMM_Vec2 start, HMM_Vec2 end, uint num_segments, f32 width) {
     HMM_Vec2 d = HMM_SubV2(end, start);
     HMM_Vec2 wd = HMM_MulV2F(HMM_NormV2((HMM_Vec2) { d.Y, -d.X }), width);
 
-    f32 segment_size = 1.0 / (2 * num_segments - 1);
+    f32 segment_length = 1.0 / (2 * num_segments - 1);
 
     for (uint i = 0; i < num_segments; ++i) {
-        f32 t = 2 * i * segment_size;
-        HMM_Vec2 segment_start = HMM_AddV2(start, HMM_MulV2F(d, t));
-        HMM_Vec2 segment_end = HMM_AddV2(start, HMM_MulV2F(d, t + segment_size));
-        HMM_Vec2 ps[4] = {
-            HMM_SubV2(segment_start, wd),
-            HMM_AddV2(segment_start, wd),
-            HMM_AddV2(segment_end, wd),
-            HMM_SubV2(segment_end, wd),
-        };
-        draw_quad(ps);
+        f32 t = 2 * i * segment_length;
+        HMM_Vec2 center = HMM_AddV2(start, HMM_MulV2F(d, t));
+        HMM_Vec2 extent = (HMM_Vec2) { width / 2.0, segment_length };
+
+        draw_aabb((AABB) { center, extent }, WHITE);
     }
 }
 
 static void extract(void) {
-    self.num_vertices = 0;
+    for (uint i = 0; i < NUM_WALLS; ++i) draw_aabb(self.walls[i], WHITE);
 
-    for (uint i = 0; i < NUM_WALLS; ++i) draw_aabb(self.walls[i]);
+    draw_vertical_dashed_line((HMM_Vec2) { 0.0, 0.88 }, (HMM_Vec2) { 0.0, -0.88 }, 32, 0.01);
 
-    draw_dashed_line((HMM_Vec2) { 0.0, 0.88 }, (HMM_Vec2) { 0.0, -0.88 }, 32, 0.01);
+    for (uint i = 0; i < NUM_PLAYERS; ++i) draw_aabb(self.paddles[i], WHITE);
 
-    for (uint i = 0; i < NUM_PLAYERS; ++i) draw_aabb(self.paddles[i]);
-
-    draw_aabb(self.ball);
+    draw_aabb(self.ball, WHITE);
 }
 
 static void submit(void) {
     sg_begin_default_pass(&self.pass_action, sapp_width(), sapp_height());
 
-    // Quad rendering
-    sg_update_buffer(self.vbo, &(sg_range) {
-                                   .ptr = self.vertices,
-                                   .size = self.num_vertices * sizeof(Vertex),
-                               });
-    sg_apply_pipeline(self.pipeline);
-    sg_apply_bindings(&(sg_bindings) {
-        .vertex_buffers = { self.vbo },
-    });
-    sg_draw(0, self.num_vertices, 1);
+    draw_sprites();
 
     sg_end_pass();
     sg_commit();

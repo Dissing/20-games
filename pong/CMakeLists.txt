@@ -13,6 +13,7 @@ set(WARNING_COMPILER_OPTIONS -Wall -Wextra -Wno-unused-parameter -Wno-missing-fi
 set(HANDMADE_INCLUDE_DIR ${DEPENDS_DIR}/HandmadeMath/)
 set(SOKOL_INCLUDE_DIR ${DEPENDS_DIR}/sokol/)
 set(SOKOL_SHDC_BIN ${DEPENDS_DIR}/sokol-tools-bin/bin/linux/sokol-shdc)
+set(STB_INCLUDE_DIR ${DEPENDS_DIR}/stb/)
 
 function(target_add_shader TARGET SHADER_FILENAME)
     get_filename_component(SHADER_NAME ${SHADER_FILENAME} NAME)
@@ -47,6 +48,7 @@ set(SRCS
 
 add_executable(pong ${SRCS})
 target_add_shader(pong src/quad.glsl)
-target_include_directories(pong SYSTEM PRIVATE ${SOKOL_INCLUDE_DIR} ${HANDMADE_INCLUDE_DIR})
+add_resource(../resources/monogram.png)
+target_include_directories(pong SYSTEM PRIVATE ${SOKOL_INCLUDE_DIR} ${HANDMADE_INCLUDE_DIR} ${STB_INCLUDE_DIR})
 target_include_directories(pong PRIVATE ${CMAKE_BINARY_DIR}/shaders)
 target_link_libraries(pong X11 Xcursor Xi GL dl pthread m)

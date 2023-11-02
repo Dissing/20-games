@@ -7,3 +7,6 @@
 [submodule "sokol-tools-bin"]
 	path = depends/sokol-tools-bin
 	url = git@github.com:floooh/sokol-tools-bin.git
+[submodule "depends/stb"]
+	path = depends/stb
+	url = git@github.com:nothings/stb.git

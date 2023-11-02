@@ -9,6 +9,8 @@
 #include <sokol_gfx.h>
 #include <sokol_glue.h>
 #include <sokol_log.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 #include "quad.glsl.h"
 
@@ -68,6 +70,8 @@ static struct {
 
     sg_image white_image;
     sg_sampler sampler;
+
+    SpriteAtlas font_atlas;
 
     // World
     AABB walls[NUM_WALLS];
@@ -163,6 +167,32 @@ static void tick(void) {
     if (left_won || right_won) { spawn_ball(left_won ? 1.0 : -1.0); }
 }
 
+typedef struct {
+    const char* path;
+    uint sprite_width;
+    uint sprite_height;
+} SpriteAtlasDesc;
+
+static SpriteAtlas make_sprite_atlas(const SpriteAtlasDesc* desc) {
+    int width, height, channels;
+    u8* pixels = stbi_load(desc->path, &width, &height, &channels, 4);
+    return (SpriteAtlas) {
+        .image = sg_make_image(&(sg_image_desc) {
+            .width = width,
+            .height = height,
+            .pixel_format = SG_PIXELFORMAT_RGBA8,
+            .data.subimage[0][0] = {
+                .ptr = pixels,
+                .size = width * height * 4,
+            },
+        }),
+        .width = width,
+        .height = height,
+        .num_cols = width / desc->sprite_width,
+        .num_rows = height / desc->sprite_height,
+    };
+}
+
 static void render_init(void) {
     sg_setup(&(sg_desc) {
         .context = sapp_sgcontext(),
@@ -253,6 +283,8 @@ static void render_init(void) {
     });
 
     self.sampler = sg_make_sampler(&(sg_sampler_desc) {});
+
+    self.font_atlas = make_sprite_atlas(&(SpriteAtlasDesc) { "monogram.png", 32, 32 });
 }
 
 static void draw_sprite(SpriteAtlas* atlas, uint index, AABB aabb, HMM_Vec4 color) {
@@ -300,6 +332,14 @@ static void draw_aabb(AABB aabb, HMM_Vec4 color) {
     };
 }
 
+static void draw_font_char(char c, HMM_Vec2 pos, f32 size, HMM_Vec4 color) {
+    AABB aabb = (AABB) {
+        pos,
+        { size, size },
+    };
+    draw_sprite(&self.font_atlas, 64, aabb, color);
+}
+
 int compare_sprite_entries(const void* a, const void* b) {
     sg_image img_a = ((const SpriteEntry*) a)->image;
     sg_image img_b = ((const SpriteEntry*) b)->image;
@@ -307,6 +347,26 @@ int compare_sprite_entries(const void* a, const void* b) {
     if (img_a.id < img_b.id) return -1;
     if (img_a.id > img_b.id) return 1;
     return 0;
+}
+
+#define MAX_NUM_BATCHES 32
+
+typedef struct {
+    SpriteBatch batches[MAX_NUM_BATCHES];
+    uint num_batches;
+    uint num_instances;
+    uint instance_size;
+} SpriteBatcher;
+
+void add_batch(SpriteBatcher* batcher, uint num_instances, sg_image image) {
+    ASSERT(batcher->num_batches < MAX_NUM_BATCHES);
+    SpriteBatch* batch = &batcher->batches[batcher->num_batches++];
+
+    batch->instance_offset = batcher->num_instances * batcher->instance_size;
+    batch->num_instance = num_instances;
+    batch->image = image;
+
+    batcher->num_instances += num_instances;
 }
 
 static void draw_sprites() {
@@ -317,32 +377,37 @@ static void draw_sprites() {
           compare_sprite_entries);
 
     // Prepare instance data and build batches
-    const uint MAX_NUM_BATCHES = 32;
-    SpriteBatch batches[MAX_NUM_BATCHES];
-    uint num_batches;
 
-    uint prev_image_id = self.sprite_entries[0].image.id;
-    uint prev_end = 0;
+    SpriteBatcher batcher = {
+        .instance_size = sizeof(BatchInstance),
+    };
+
+    sg_image prev_image = self.sprite_entries[0].image;
     uint num_batch_instances = 0;
 
     for (uint i = 0; i < self.num_sprite_entries; ++i) {
-        num_batch_instances++;
+        // Fetch entry
         uint offset = i * sizeof(BatchInstance);
-
         SpriteEntry* entry = &self.sprite_entries[i];
-        memcpy(self.instances + offset, &entry->instance, sizeof(BatchInstance));
 
-        if (entry->image.id != prev_image_id || i == self.num_sprite_entries - 1) {
-            ASSERT(num_batches < MAX_NUM_BATCHES);
-            SpriteBatch* batch = &batches[num_batches++];
-            batch->instance_offset = prev_end;
-            batch->num_instance = num_batch_instances;
-            batch->image = entry->image;
-
-            prev_image_id = entry->image.id;
-            prev_end = offset + sizeof(BatchInstance);
+        // Emit batch if texture is different from last entry
+        if (entry->image.id != prev_image.id) {
+            add_batch(&batcher, num_batch_instances, prev_image);
             num_batch_instances = 0;
         }
+
+        // Copy entry instance into buffer
+
+        memcpy(self.instances + offset, &entry->instance, sizeof(BatchInstance));
+        num_batch_instances++;
+
+        // Emit batch if this is the last entry
+
+        if (i == self.num_sprite_entries - 1) {
+            add_batch(&batcher, num_batch_instances, entry->image);
+        }
+
+        prev_image = entry->image;
     }
 
     // Upload instances to GPU
@@ -354,14 +419,14 @@ static void draw_sprites() {
     sg_apply_pipeline(self.pipeline);
 
     // Draw each batch
-    for (uint i = 0; i < num_batches; ++i) {
+    for (uint i = 0; i < batcher.num_batches; ++i) {
         sg_apply_bindings(&(sg_bindings) {
-            .fs.images = { batches[i].image },
+            .fs.images = { batcher.batches[i].image },
             .fs.samplers = { self.sampler },
             .vertex_buffers = { self.vertex_vbo, self.instance_vbo },
-            .vertex_buffer_offsets[1] = batches[i].instance_offset,
+            .vertex_buffer_offsets[1] = batcher.batches[i].instance_offset,
         });
-        sg_draw(0, 6, batches[i].num_instance);
+        sg_draw(0, 6, batcher.batches[i].num_instance);
     }
 
     // Clear state for next frame
@@ -394,6 +459,8 @@ static void extract(void) {
     for (uint i = 0; i < NUM_PLAYERS; ++i) draw_aabb(self.paddles[i], WHITE);
 
     draw_aabb(self.ball, WHITE);
+
+    draw_font_char('A', (HMM_Vec2) { 0.5, 0.5 }, 0.1, WHITE);
 }
 
 static void submit(void) {
